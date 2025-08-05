@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import requests
 from PIL import Image
@@ -7,7 +7,7 @@ import ast
 import random
 
 # Load dataset
-file_path = "output_realistic.csv"
+file_path = "categorized_reviews_output.csv"
 laptop_df = pd.read_csv(file_path)
 laptop_df.columns = laptop_df.columns.str.strip()
 
@@ -83,15 +83,14 @@ st.markdown("""
 st.sidebar.header("Filter by (locked):")
 st.sidebar.markdown("🔒 The filters below are visible but disabled for this study.")
 
-# Disabled sliders
 st.sidebar.slider("Max Price", 50, 1500, 1000, disabled=True)
 st.sidebar.slider("Minimum Rating", 0.0, 5.0, 3.0, 0.1, disabled=True)
 st.sidebar.slider("Minimum RAM (GB)", 2, 32, 4, disabled=True)
 
-# Purpose filter
+# Purpose filter using Detected_Categories
 category_filter = st.sidebar.selectbox(
     "Review Purpose (active)", 
-    ["All", "Student", "Creative", "Professional", "Gaming", "Personal", "Travelling"]
+    ["All", "student", "creative", "professional", "gaming", "personal", "travel", "none"]
 )
 
 # Filter laptops by review purpose
@@ -99,10 +98,21 @@ if category_filter == "All":
     filtered_df = laptop_df.copy()
     st.info("Showing all laptops. Select a review purpose to narrow down results.")
 else:
-    filtered_df = laptop_df[laptop_df["reviews"].str.contains(category_filter, case=False, na=False)].copy()
-    st.info(f"Showing laptops reviewed for the purpose: **{category_filter}**")
+    filtered_df = laptop_df[laptop_df["Detected_Categories"].str.contains(category_filter, case=False, na=False)].copy()
+    st.info(f"Showing laptops reviewed for the purpose: **{category_filter.capitalize()}**")
 
-filtered_df = filtered_df.sort_values(by="ratingAvg", ascending=False)
+# --- Compute category match count for ranking ---
+def count_matching_reviews(row, category):
+    if category == "All":
+        return 0
+    reviews = str(row.get("ReviewsN", "")).split("||")
+    cats = str(row.get("Detected_Categories", "")).split("||")
+    return sum(1 for c in cats if c.strip().lower() == category.lower())
+
+filtered_df["category_match_count"] = filtered_df.apply(lambda row: count_matching_reviews(row, category_filter), axis=1)
+
+# --- Sort by number of matching reviews (then rating) ---
+filtered_df = filtered_df.sort_values(by=["category_match_count", "ratingAvg"], ascending=[False, False])
 
 # --- Pagination ---
 st.sidebar.write(f"Filtered results: {len(filtered_df)} laptops")
@@ -161,26 +171,27 @@ for _, row in current_df.iterrows():
         st.markdown(f"<div class='product-detail'><b>Memory:</b> {row.get('systemMemoryRam', '-')}</div>", unsafe_allow_html=True)
         st.link_button("Add to basket", row.get("productURL", "#"))
 
-    # --- Column 3: Purpose-Matching Review Snippets in Blue ---
+    # --- Column 3: Filtered Reviews Only (Blue) ---
     with col3:
-        good_reviews = row.get("reviewSnippets", "")
-        bad_reviews = row.get("Bad Reviews", "")
+        good_reviews = row.get("ReviewsN", "")
+        detected_cats = row.get("Detected_Categories", "")
         snippets = []
 
-        if category_filter != "All":
-            if isinstance(good_reviews, str) and good_reviews.strip():
-                for snip in good_reviews.split("||"):
-                    if category_filter.lower() in snip.lower():
-                        snippets.append((snip.strip(), 'font-weight:bold;color:blue;'))
-            if isinstance(bad_reviews, str) and bad_reviews.strip():
-                for snip in bad_reviews.split("||"):
-                    if category_filter.lower() in snip.lower():
-                        snippets.append((snip.strip(), 'font-weight:bold;color:blue;'))
+        if isinstance(good_reviews, str) and good_reviews.strip():
+            review_list = good_reviews.split("||")
+            category_list = str(detected_cats).split("||") if isinstance(detected_cats, str) else []
+
+            for review, cat in zip(review_list, category_list):
+                review = review.strip()
+                cat = cat.strip().lower()
+                if category_filter == "All":
+                    snippets.append((review, ''))  # show all
+                elif category_filter.lower() == cat:
+                    snippets.append((review, 'font-weight:bold;color:blue;'))  # match only
 
         if snippets:
-            random.shuffle(snippets)
             st.markdown("<div class='review-box'><b>What users say:</b>", unsafe_allow_html=True)
-            for snip, style in snippets:
+            for snip, style in snippets[:5]:
                 st.markdown(f"<div class='product-detail' style='{style}'>• {snip}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
