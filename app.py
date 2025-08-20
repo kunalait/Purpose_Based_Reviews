@@ -98,7 +98,7 @@ st.markdown("""
     background-color: #e67300;
 }
 </style>
-<a href="https://www.soscisurvey.de/yourSurvey/?q=feedbackPage" target="_self">
+<a href="https://www.soscisurvey.de/prodpurp/index.php?i=ZO8Z3FJQ09XL&rnd=UITP" target="_self">
     <div class="fixed-bottom-right">Next ➡️</div>
 </a>
 """, unsafe_allow_html=True)
@@ -228,4 +228,5 @@ st.download_button(
     file_name="filtered_laptops.csv",
     mime="text/csv"
 )
+
 
