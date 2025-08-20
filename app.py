@@ -78,6 +78,30 @@ st.markdown("""
     <div>Delivering to Essen 45127 | EN | Account & Lists | Orders | 🛒</div>
 </div>
 """, unsafe_allow_html=True)
+# --- Bottom-right floating button ---
+st.markdown("""
+<style>
+.fixed-bottom-right {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    background-color: #ff914d;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: bold;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    text-align: center;
+    z-index: 9999;
+}
+.fixed-bottom-right:hover {
+    background-color: #e67300;
+}
+</style>
+<a href="https://www.soscisurvey.de/yourSurvey/?q=feedbackPage" target="_self">
+    <div class="fixed-bottom-right">Next ➡️</div>
+</a>
+""", unsafe_allow_html=True)
 
 # --- Sidebar: Filters ---
 st.sidebar.header("Filter by (locked):")
@@ -204,3 +228,4 @@ st.download_button(
     file_name="filtered_laptops.csv",
     mime="text/csv"
 )
+
