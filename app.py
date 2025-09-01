@@ -28,7 +28,7 @@ laptop_df["Storage"] = laptop_df["totalStorageCapacity"].apply(extract_gb)
 # --- Page Setup ---
 st.set_page_config(layout="wide")
 
-# --- Top Bar ---
+# --- Top Bar (HTML) ---
 st.markdown("""
 <style>
 .top-bar {
@@ -71,6 +71,13 @@ st.markdown("""
     overflow-x: auto;
     gap: 10px;
 }
+.toolbar-row {
+    padding: 6px 0 4px 0;
+}
+.toolbar-label {
+    font-weight: 600;
+    margin-right: 6px;
+}
 </style>
 <div class="top-bar">
     <div><b>Vacos.de</b></div>
@@ -78,6 +85,24 @@ st.markdown("""
     <div>Delivering to Essen 45127 | EN | Account & Lists | Orders | 🛒</div>
 </div>
 """, unsafe_allow_html=True)
+
+# --- Inline toolbar just below top bar (same horizontal visual row as search) ---
+# We place the Purpose selector at the right to visually share the same line with the search box
+tb1, tb2, tb3 = st.columns([2.5, 3.5, 1.5])  # center area reserved for search visually, right for purpose
+with tb3:
+    if "purpose" not in st.session_state:
+        st.session_state.purpose = "All"
+    st.markdown("<div class='toolbar-row'><span class='toolbar-label'>🎯 Purpose</span></div>", unsafe_allow_html=True)
+    st.session_state.purpose = st.selectbox(
+        "Purpose",
+        ["All", "student", "creative", "professional", "gaming", "personal", "travel", "none"],
+        index=["All", "student", "creative", "professional", "gaming", "personal", "travel", "none"].index(st.session_state.purpose),
+        label_visibility="collapsed",
+        key="purpose_select_top"
+    )
+
+category_filter = st.session_state.purpose
+
 # --- Bottom-right floating button ---
 st.markdown("""
 <style>
@@ -94,33 +119,23 @@ st.markdown("""
     text-align: center;
     z-index: 9999;
 }
-.fixed-bottom-right:hover {
-    background-color: #e67300;
-}
+.fixed-bottom-right:hover { background-color: #e67300; }
 </style>
 <a href="https://www.soscisurvey.de/prodpurp/index.php?i=ZO8Z3FJQ09XL&rnd=UITP" target="_self">
     <div class="fixed-bottom-right">Next ➡️</div>
 </a>
 """, unsafe_allow_html=True)
 
-# --- Sidebar: Filters ---
+# --- Sidebar: Filters (locked for study) ---
 st.sidebar.header("Filter by (locked):")
 st.sidebar.markdown("🔒 The filters below are visible but disabled for this study.")
-
 st.sidebar.slider("Max Price", 50, 1500, 1000, disabled=True)
 st.sidebar.slider("Minimum Rating", 0.0, 5.0, 3.0, 0.1, disabled=True)
 st.sidebar.slider("Minimum RAM (GB)", 2, 32, 4, disabled=True)
 
-# Purpose filter using Detected_Categories
-category_filter = st.sidebar.selectbox(
-    "Review Purpose (active)", 
-    ["All", "student", "creative", "professional", "gaming", "personal", "travel", "none"]
-)
-
-# Filter laptops by review purpose
+# --- Filter laptops by review purpose ---
 if category_filter == "All":
     filtered_df = laptop_df.copy()
-    st.info("Showing all laptops. Select a review purpose to narrow down results.")
 else:
     filtered_df = laptop_df[laptop_df["Detected_Categories"].str.contains(category_filter, case=False, na=False)].copy()
     st.info(f"Showing laptops reviewed for the purpose: **{category_filter.capitalize()}**")
@@ -129,7 +144,6 @@ else:
 def count_matching_reviews(row, category):
     if category == "All":
         return 0
-    reviews = str(row.get("ReviewsN", "")).split("||")
     cats = str(row.get("Detected_Categories", "")).split("||")
     return sum(1 for c in cats if c.strip().lower() == category.lower())
 
@@ -161,9 +175,10 @@ end_idx = start_idx + items_per_page
 current_df = filtered_df.iloc[start_idx:end_idx]
 st.sidebar.markdown(f"**Page {page} of {total_pages}**")
 
-# --- Display Laptops ---
+# --- Product List Header ---
 st.markdown("## Laptop Results")
 
+# --- Render Product Cards ---
 for _, row in current_df.iterrows():
     col1, col2, col3 = st.columns([1, 2, 2])
 
@@ -195,23 +210,25 @@ for _, row in current_df.iterrows():
         st.markdown(f"<div class='product-detail'><b>Memory:</b> {row.get('systemMemoryRam', '-')}</div>", unsafe_allow_html=True)
         st.link_button("Add to basket", row.get("productURL", "#"))
 
-    # --- Column 3: Filtered Reviews Only (Blue) ---
+    # --- Column 3: Reviews (only matching category shown & highlighted) ---
     with col3:
-        good_reviews = row.get("ReviewsN", "")
-        detected_cats = row.get("Detected_Categories", "")
+        reviews_all = row.get("ReviewsN", "")
+        cats_all = row.get("Detected_Categories", "")
         snippets = []
 
-        if isinstance(good_reviews, str) and good_reviews.strip():
-            review_list = good_reviews.split("||")
-            category_list = str(detected_cats).split("||") if isinstance(detected_cats, str) else []
+        if isinstance(reviews_all, str) and reviews_all.strip():
+            review_list = reviews_all.split("||")
+            category_list = str(cats_all).split("||") if isinstance(cats_all, str) else []
 
             for review, cat in zip(review_list, category_list):
                 review = review.strip()
                 cat = cat.strip().lower()
                 if category_filter == "All":
-                    snippets.append((review, ''))  # show all
+                    # Show all reviews if "All"
+                    snippets.append((review, ''))
                 elif category_filter.lower() == cat:
-                    snippets.append((review, 'font-weight:bold;color:blue;'))  # match only
+                    # Only matching selected purpose
+                    snippets.append((review, 'font-weight:bold;color:blue;'))
 
         if snippets:
             st.markdown("<div class='review-box'><b>What users say:</b>", unsafe_allow_html=True)
@@ -228,5 +245,3 @@ st.download_button(
     file_name="filtered_laptops.csv",
     mime="text/csv"
 )
-
-
