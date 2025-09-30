@@ -1,4 +1,4 @@
-import streamlit as st 
+import streamlit as st
 import pandas as pd
 import requests
 from PIL import Image
@@ -6,7 +6,9 @@ from io import BytesIO
 import ast
 import random
 
+# =========================
 # Load dataset
+# =========================
 file_path = "categorized_reviews_output.csv"
 laptop_df = pd.read_csv(file_path)
 laptop_df.columns = laptop_df.columns.str.strip()
@@ -14,21 +16,39 @@ laptop_df.columns = laptop_df.columns.str.strip()
 # --- Extract GB values ---
 def extract_gb(value):
     try:
-        if isinstance(value, str) and "gigabyte" in value:
-            return int(value.split()[0])
-        elif isinstance(value, str) and "GB" in value:
+        if isinstance(value, str) and "gigabyte" in value.lower():
+            # e.g., "16 gigabytes" / "16 gigabyte"
+            parts = value.lower().split()
+            for p in parts:
+                if p.isdigit():
+                    return int(p)
+        elif isinstance(value, str) and "gb" in value:
+            # e.g., "16GB" or "16 GB"
             return int(value.split("GB")[0].strip())
     except:
         return None
     return value
 
-laptop_df["RAM"] = laptop_df["systemMemoryRam"].apply(extract_gb)
-laptop_df["Storage"] = laptop_df["totalStorageCapacity"].apply(extract_gb)
+laptop_df["RAM"] = laptop_df.get("systemMemoryRam", pd.Series([None]*len(laptop_df))).apply(extract_gb)
+laptop_df["Storage"] = laptop_df.get("totalStorageCapacity", pd.Series([None]*len(laptop_df))).apply(extract_gb)
 
-# --- Page Setup ---
+# Ensure columns exist to avoid KeyErrors later
+for col in [
+    "Detected_Categories","ReviewsN","imageURLs","titleStandard","ratingAvgDisplay",
+    "ratingNum","price","screenSize","storageType","processorSpeedBase",
+    "systemMemoryRam","productURL","ratingAvg"
+]:
+    if col not in laptop_df.columns:
+        laptop_df[col] = None
+
+# =========================
+# Page Setup
+# =========================
 st.set_page_config(layout="wide")
 
-# --- Top Bar (HTML) ---
+# =========================
+# Top Bar (HTML)
+# =========================
 st.markdown("""
 <style>
 .top-bar {
@@ -86,24 +106,29 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- Inline toolbar just below top bar (same horizontal visual row as search) ---
-# We place the Purpose selector at the right to visually share the same line with the search box
-tb1, tb2, tb3 = st.columns([2.5, 3.5, 1.5])  # center area reserved for search visually, right for purpose
+# =========================
+# Inline toolbar
+# =========================
+tb1, tb2, tb3 = st.columns([2.5, 3.5, 1.5])
 with tb3:
     if "purpose" not in st.session_state:
         st.session_state.purpose = "All"
     st.markdown("<div class='toolbar-row'><span class='toolbar-label'>🎯 Purpose</span></div>", unsafe_allow_html=True)
+
+    purpose_options = ["All", "student", "creative", "professional", "gaming", "personal", "travel", "none"]
     st.session_state.purpose = st.selectbox(
         "Purpose",
-        ["All", "student", "creative", "professional", "gaming", "personal", "travel", "none"],
-        index=["All", "student", "creative", "professional", "gaming", "personal", "travel", "none"].index(st.session_state.purpose),
+        purpose_options,
+        index=purpose_options.index(st.session_state.purpose) if st.session_state.purpose in purpose_options else 0,
         label_visibility="collapsed",
         key="purpose_select_top"
     )
 
 category_filter = st.session_state.purpose
 
-# --- Bottom-right floating button ---
+# =========================
+# Bottom-right floating button
+# =========================
 st.markdown("""
 <style>
 .fixed-bottom-right {
@@ -126,33 +151,52 @@ st.markdown("""
 </a>
 """, unsafe_allow_html=True)
 
-# --- Sidebar: Filters (locked for study) ---
+# =========================
+# Sidebar: Filters (locked)
+# =========================
 st.sidebar.header("Filter by (locked):")
 st.sidebar.markdown("🔒 The filters below are visible but disabled for this study.")
 st.sidebar.slider("Max Price", 50, 1500, 1000, disabled=True)
 st.sidebar.slider("Minimum Rating", 0.0, 5.0, 3.0, 0.1, disabled=True)
 st.sidebar.slider("Minimum RAM (GB)", 2, 32, 4, disabled=True)
 
-# --- Filter laptops by review purpose ---
+# =========================
+# Filtering by review purpose
+# =========================
 if category_filter == "All":
     filtered_df = laptop_df.copy()
 else:
-    filtered_df = laptop_df[laptop_df["Detected_Categories"].str.contains(category_filter, case=False, na=False)].copy()
+    # broad contains, case-insensitive
+    filtered_df = laptop_df[laptop_df["Detected_Categories"].astype(str).str.contains(category_filter, case=False, na=False)].copy()
     st.info(f"Showing laptops reviewed for the purpose: **{category_filter.capitalize()}**")
 
-# --- Compute category match count for ranking ---
+# =========================
+# Ranking by match count then rating
+# =========================
 def count_matching_reviews(row, category):
     if category == "All":
         return 0
-    cats = str(row.get("Detected_Categories", "")).split("||")
-    return sum(1 for c in cats if c.strip().lower() == category.lower())
+    raw = str(row.get("Detected_Categories", "")).lower()
+    # Normalize separators to ||
+    normalized = raw.replace(",", "||").replace("|", "||")
+    # Split and compare by substring containment for robustness
+    cats = [c.strip() for c in normalized.split("||") if c.strip()]
+    # exact token match first; if not present, accept substring matches
+    exact = sum(1 for c in cats if c == category.lower())
+    if exact:
+        return exact
+    return sum(1 for c in cats if category.lower() in c)
 
 filtered_df["category_match_count"] = filtered_df.apply(lambda row: count_matching_reviews(row, category_filter), axis=1)
 
-# --- Sort by number of matching reviews (then rating) ---
-filtered_df = filtered_df.sort_values(by=["category_match_count", "ratingAvg"], ascending=[False, False])
+# if ratingAvg might be missing or non-numeric, coerce for sorting
+filtered_df["ratingAvg_num"] = pd.to_numeric(filtered_df.get("ratingAvg", pd.Series([None]*len(filtered_df))), errors="coerce").fillna(0)
 
-# --- Pagination ---
+filtered_df = filtered_df.sort_values(by=["category_match_count", "ratingAvg_num"], ascending=[False, False])
+
+# =========================
+# Pagination
+# =========================
 st.sidebar.write(f"Filtered results: {len(filtered_df)} laptops")
 items_per_page = 20
 total_items = len(filtered_df)
@@ -175,60 +219,88 @@ end_idx = start_idx + items_per_page
 current_df = filtered_df.iloc[start_idx:end_idx]
 st.sidebar.markdown(f"**Page {page} of {total_pages}**")
 
-# --- Product List Header ---
+# =========================
+# Product List Header
+# =========================
 st.markdown("## Laptop Results")
 
-# --- Render Product Cards ---
+# =========================
+# Render Product Cards
+# =========================
 for _, row in current_df.iterrows():
     col1, col2, col3 = st.columns([1, 2, 2])
 
     # --- Column 1: Images ---
     with col1:
         try:
-            img_urls = ast.literal_eval(row["imageURLs"]) if isinstance(row["imageURLs"], str) else []
+            img_urls = []
+            if isinstance(row["imageURLs"], str) and row["imageURLs"].strip():
+                try:
+                    # try parsing Python-literal-style lists
+                    img_urls = ast.literal_eval(row["imageURLs"])
+                    if not isinstance(img_urls, list):
+                        img_urls = []
+                except Exception:
+                    # try splitting by common separators
+                    img_urls = [u.strip() for u in row["imageURLs"].split("||") if u.strip()]
             if img_urls:
                 st.markdown("<div class='scroll-container'>", unsafe_allow_html=True)
                 for img_url in img_urls:
                     try:
-                        img_data = requests.get(img_url).content
-                        st.image(Image.open(BytesIO(img_data)), width=120)
+                        resp = requests.get(img_url, timeout=6)
+                        resp.raise_for_status()
+                        st.image(Image.open(BytesIO(resp.content)), width=120)
                     except:
                         st.markdown("<div class='product-detail'>[Image not available]</div>", unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div class='product-detail'>[No image]</div>", unsafe_allow_html=True)
         except:
             st.markdown("<div class='product-detail'>[Invalid image format]</div>", unsafe_allow_html=True)
 
     # --- Column 2: Product Info ---
     with col2:
-        st.markdown(f"<div class='product-title'>{row.get('titleStandard', 'No Title')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='product-detail'>⭐ {row.get('ratingAvgDisplay', '-')}/5 ({row.get('ratingNum', '0')} reviews)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='product-title'>{row.get('titleStandard', 'No Title') or 'No Title'}</div>", unsafe_allow_html=True)
+        rating_display = row.get('ratingAvgDisplay', '-') or '-'
+        rating_num = row.get('ratingNum', '0') or '0'
+        st.markdown(f"<div class='product-detail'>⭐ {rating_display}/5 ({rating_num} reviews)</div>", unsafe_allow_html=True)
         st.markdown("<div class='product-detail'><b>Limited time deal</b></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='price-block'>€{row.get('price', '-')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='product-detail'><b>Display Size:</b> {row.get('screenSize', '-')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='product-detail'><b>Hard disk:</b> {row.get('storageType', '-')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='product-detail'><b>CPU Speed:</b> {row.get('processorSpeedBase', '-')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='product-detail'><b>Memory:</b> {row.get('systemMemoryRam', '-')}</div>", unsafe_allow_html=True)
-        st.link_button("Add to basket", row.get("productURL", "#"))
+        price_display = row.get('price', '-') if pd.notna(row.get('price', '-')) else '-'
+        st.markdown(f"<div class='price-block'>€{price_display}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='product-detail'><b>Display Size:</b> {row.get('screenSize', '-') or '-'}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='product-detail'><b>Hard disk:</b> {row.get('storageType', '-') or '-'}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='product-detail'><b>CPU Speed:</b> {row.get('processorSpeedBase', '-') or '-'}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='product-detail'><b>Memory:</b> {row.get('systemMemoryRam', '-') or '-'}</div>", unsafe_allow_html=True)
+        st.link_button("Add to basket", row.get("productURL", "#") or "#")
 
-    # --- Column 3: Reviews (only matching category shown & highlighted) ---
+    # --- Column 3: Reviews (highlight selected purpose) ---
     with col3:
         reviews_all = row.get("ReviewsN", "")
         cats_all = row.get("Detected_Categories", "")
         snippets = []
 
         if isinstance(reviews_all, str) and reviews_all.strip():
-            review_list = reviews_all.split("||")
-            category_list = str(cats_all).split("||") if isinstance(cats_all, str) else []
+            review_list = [r.strip() for r in reviews_all.split("||")]
+            # normalize separators to handle commas or pipes in category string
+            raw = str(cats_all)
+            normalized = raw.replace(",", "||").replace("|", "||")
+            category_list = [c.strip().lower() for c in normalized.split("||")] if isinstance(raw, str) else []
 
             for review, cat in zip(review_list, category_list):
-                review = review.strip()
-                cat = cat.strip().lower()
                 if category_filter == "All":
-                    # Show all reviews if "All"
-                    snippets.append((review, ''))
-                elif category_filter.lower() == cat:
-                    # Only matching selected purpose
-                    snippets.append((review, 'font-weight:bold;color:blue;'))
+                    snippets.append((review, ""))  # show all reviews unstyled
+                else:
+                    # substring match to catch multi-label category strings
+                    if category_filter.lower() in cat:
+                        snippets.append((review, "font-weight:700;color:blue;"))
+                    else:
+                        # include non-matching reviews but unstyled, if you want ALL visible:
+                        # snippets.append((review, ""))  # uncomment to always show all
+                        pass
+
+            # Fallback: if a specific category was chosen and no reviews matched, show a few general ones
+            if category_filter != "All" and not snippets:
+                snippets = [(rv, "") for rv in review_list[:5]]
 
         if snippets:
             st.markdown("<div class='review-box'><b>What users say:</b>", unsafe_allow_html=True)
@@ -238,10 +310,12 @@ for _, row in current_df.iterrows():
 
     st.markdown("---")
 
-# --- Download Button ---
+# =========================
+# Download Button
+# =========================
 st.download_button(
     label="Download Filtered CSV",
-    data=filtered_df.to_csv(index=False).encode('utf-8'),
+    data=filtered_df.drop(columns=["ratingAvg_num"], errors="ignore").to_csv(index=False).encode('utf-8'),
     file_name="filtered_laptops.csv",
     mime="text/csv"
 )
